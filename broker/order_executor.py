@@ -1,21 +1,21 @@
-"""Order placement, modification, and cancellation via Alpaca."""
+"""Order placement, modification, and cancellation via Alpaca.
+
+Stub scaffold: signatures, type hints, and docstrings only — no logic yet.
+"""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-try:
-    from alpaca.trading.requests import MarketOrderRequest, LimitOrderRequest
-    from alpaca.trading.enums import OrderSide, TimeInForce
-except ImportError:
-    MarketOrderRequest = LimitOrderRequest = None
-    OrderSide = TimeInForce = None
-
-from .alpaca_client import AlpacaClient
+if TYPE_CHECKING:
+    from .alpaca_client import AlpacaClient
 
 
 @dataclass
 class OrderResult:
+    """Normalized result of a submitted order."""
+
     id: str
     symbol: str
     side: str
@@ -24,48 +24,26 @@ class OrderResult:
 
 
 class OrderExecutor:
-    def __init__(self, client: AlpacaClient):
-        self.client = client
+    """Submit, modify, and cancel orders through the Alpaca client."""
+
+    def __init__(self, client: "AlpacaClient") -> None:
+        """Store the broker client."""
+        ...
 
     def submit_market(self, symbol: str, qty: int, side: str) -> OrderResult:
-        if qty <= 0:
-            raise ValueError("qty must be positive")
-        req = MarketOrderRequest(
-            symbol=symbol,
-            qty=qty,
-            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
-        )
-        o = self.client.trading.submit_order(req)
-        return self._wrap(o)
+        """Submit a DAY market order."""
+        ...
 
     def submit_limit(
         self, symbol: str, qty: int, side: str, limit_price: float
     ) -> OrderResult:
-        if qty <= 0:
-            raise ValueError("qty must be positive")
-        req = LimitOrderRequest(
-            symbol=symbol,
-            qty=qty,
-            side=OrderSide.BUY if side == "buy" else OrderSide.SELL,
-            time_in_force=TimeInForce.DAY,
-            limit_price=round(limit_price, 2),
-        )
-        o = self.client.trading.submit_order(req)
-        return self._wrap(o)
+        """Submit a DAY limit order."""
+        ...
 
     def cancel(self, order_id: str) -> None:
-        self.client.trading.cancel_order_by_id(order_id)
+        """Cancel a single order by id."""
+        ...
 
     def cancel_all(self) -> None:
-        self.client.trading.cancel_orders()
-
-    @staticmethod
-    def _wrap(o) -> OrderResult:
-        return OrderResult(
-            id=str(o.id),
-            symbol=o.symbol,
-            side=str(o.side),
-            qty=float(o.qty),
-            status=str(o.status),
-        )
+        """Cancel every open order."""
+        ...

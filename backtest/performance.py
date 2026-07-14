@@ -1,17 +1,20 @@
-"""Performance metrics: Sharpe, Sortino, drawdown, regime breakdown, benchmark."""
+"""Performance metrics: Sharpe, Sortino, drawdown, regime breakdown, benchmark.
+
+Stub scaffold: signatures, type hints, and docstrings only — no logic yet.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Optional
 
-import numpy as np
 import pandas as pd
-
-_ANNUALIZATION = 252
 
 
 @dataclass
 class PerformanceReport:
+    """Summary performance statistics for a backtest run."""
+
     total_return: float
     cagr: float
     sharpe: float
@@ -20,69 +23,41 @@ class PerformanceReport:
     calmar: float
     win_rate: float
     volatility: float
-    regime_breakdown: dict
-    vs_benchmark: dict
+    regime_breakdown: dict = field(default_factory=dict)
+    vs_benchmark: dict = field(default_factory=dict)
 
 
-def _sharpe(returns: pd.Series, rf: float) -> float:
-    excess = returns - rf / _ANNUALIZATION
-    sd = excess.std()
-    return float(np.sqrt(_ANNUALIZATION) * excess.mean() / sd) if sd else 0.0
+class PerformanceAnalyzer:
+    """Compute risk-adjusted metrics and regime/benchmark breakdowns."""
 
+    def __init__(self, cfg: dict) -> None:
+        """Read backtest.risk_free_rate config."""
+        ...
 
-def _sortino(returns: pd.Series, rf: float) -> float:
-    excess = returns - rf / _ANNUALIZATION
-    downside = excess[excess < 0].std()
-    return float(np.sqrt(_ANNUALIZATION) * excess.mean() / downside) if downside else 0.0
+    def analyze(
+        self,
+        equity: pd.Series,
+        returns: pd.Series,
+        regimes: pd.Series,
+        benchmark: Optional[pd.Series] = None,
+    ) -> PerformanceReport:
+        """Full performance report, optionally versus a benchmark series."""
+        ...
 
+    def sharpe(self, returns: pd.Series) -> float:
+        """Annualized Sharpe ratio."""
+        ...
 
-def max_drawdown(equity: pd.Series) -> float:
-    peak = equity.cummax()
-    return float((equity / peak - 1).min())
+    def sortino(self, returns: pd.Series) -> float:
+        """Annualized Sortino ratio (downside deviation)."""
+        ...
 
+    def max_drawdown(self, equity: pd.Series) -> float:
+        """Maximum peak-to-trough drawdown."""
+        ...
 
-def compute(
-    equity: pd.Series,
-    returns: pd.Series,
-    regimes: pd.Series,
-    cfg: dict,
-    benchmark: pd.Series | None = None,
-) -> PerformanceReport:
-    rf = cfg["backtest"]["risk_free_rate"]
-    n = len(returns)
-    total_return = float(equity.iloc[-1] / equity.iloc[0] - 1) if n else 0.0
-    years = n / _ANNUALIZATION if n else 1
-    cagr = float((1 + total_return) ** (1 / years) - 1) if years > 0 else 0.0
-    mdd = max_drawdown(equity)
-
-    breakdown = {}
-    for label in ("low", "mid", "high"):
-        mask = regimes == label
-        r = returns[mask]
-        breakdown[label] = {
-            "bars": int(mask.sum()),
-            "mean_ret": float(r.mean()) if len(r) else 0.0,
-            "sharpe": _sharpe(r, rf) if len(r) > 1 else 0.0,
-        }
-
-    vs_bench = {}
-    if benchmark is not None and len(benchmark) == n:
-        bench_total = float((1 + benchmark).prod() - 1)
-        vs_bench = {
-            "benchmark_return": bench_total,
-            "excess_return": total_return - bench_total,
-            "benchmark_sharpe": _sharpe(benchmark, rf),
-        }
-
-    return PerformanceReport(
-        total_return=total_return,
-        cagr=cagr,
-        sharpe=_sharpe(returns, rf),
-        sortino=_sortino(returns, rf),
-        max_drawdown=mdd,
-        calmar=float(cagr / abs(mdd)) if mdd else 0.0,
-        win_rate=float((returns > 0).mean()) if n else 0.0,
-        volatility=float(returns.std() * np.sqrt(_ANNUALIZATION)),
-        regime_breakdown=breakdown,
-        vs_benchmark=vs_bench,
-    )
+    def regime_breakdown(
+        self, returns: pd.Series, regimes: pd.Series
+    ) -> dict:
+        """Per-regime bar count, mean return, and Sharpe."""
+        ...

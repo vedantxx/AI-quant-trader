@@ -5,6 +5,12 @@ market features; a volatility-based allocation strategy maps each regime to a
 target exposure; a risk manager enforces sizing, leverage, and drawdown circuit
 breakers; orders route to Alpaca (paper by default).
 
+## Status
+
+Stub scaffold: every class/dataclass and method signature is in place with full
+type hints and docstrings, but method bodies are `...` — no logic implemented
+yet. Tests are skeletons naming the cases to fill in.
+
 ## Structure
 
 ```

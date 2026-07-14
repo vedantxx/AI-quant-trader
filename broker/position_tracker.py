@@ -1,14 +1,21 @@
-"""Track open positions and P&L."""
+"""Track open positions, portfolio state, and P&L.
+
+Stub scaffold: signatures, type hints, and docstrings only — no logic yet.
+"""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
-from .alpaca_client import AlpacaClient
+if TYPE_CHECKING:  # break broker import cycle
+    from .alpaca_client import AlpacaClient
 
 
 @dataclass
-class Position:
+class PositionSnapshot:
+    """Point-in-time view of a single open position."""
+
     symbol: str
     qty: float
     avg_entry: float
@@ -17,36 +24,37 @@ class Position:
     unrealized_pl: float
     unrealized_plpc: float
 
-    @property
-    def weight_of(self) -> float:
-        return self.market_value
+
+@dataclass
+class PortfolioSnapshot:
+    """Point-in-time view of the whole account."""
+
+    equity: float
+    cash: float
+    buying_power: float
+    portfolio_value: float
+    positions: dict[str, PositionSnapshot] = field(default_factory=dict)
 
 
 class PositionTracker:
-    def __init__(self, client: AlpacaClient):
-        self.client = client
+    """Track open positions and P&L via the Alpaca client."""
 
-    def snapshot(self) -> dict[str, Position]:
-        out: dict[str, Position] = {}
-        for p in self.client.get_positions():
-            out[p.symbol] = Position(
-                symbol=p.symbol,
-                qty=float(p.qty),
-                avg_entry=float(p.avg_entry_price),
-                market_price=float(p.current_price),
-                market_value=float(p.market_value),
-                unrealized_pl=float(p.unrealized_pl),
-                unrealized_plpc=float(p.unrealized_plpc),
-            )
-        return out
+    def __init__(self, client: "AlpacaClient") -> None:
+        """Store the broker client."""
+        ...
+
+    def snapshot(self) -> dict[str, PositionSnapshot]:
+        """Current open positions keyed by symbol."""
+        ...
+
+    def portfolio(self) -> PortfolioSnapshot:
+        """Full account snapshot including positions."""
+        ...
 
     def current_weights(self, equity: float) -> dict[str, float]:
-        if equity <= 0:
-            return {}
-        return {
-            sym: pos.market_value / equity
-            for sym, pos in self.snapshot().items()
-        }
+        """Per-symbol market value as a fraction of equity."""
+        ...
 
     def total_unrealized(self) -> float:
-        return sum(p.unrealized_pl for p in self.snapshot().values())
+        """Sum of unrealized P&L across open positions."""
+        ...
