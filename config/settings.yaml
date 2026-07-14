@@ -1,0 +1,71 @@
+# ============================================================================
+# AI-Quant-trader — Configuration
+# All tunable parameters. Edit here; code reads defaults from this file.
+# ============================================================================
+
+# ----------------------------------------------------------------------------
+# Broker / universe
+# ----------------------------------------------------------------------------
+broker:
+  paper_trading: true                 # true = Alpaca paper account, false = live
+  symbols: [SPY, QQQ, AAPL, MSFT, AMZN, GOOGL, NVDA, META, TSLA, AMD]
+  timeframe: 1Day                      # bar size: 1Min, 5Min, 15Min, 1Hour, 1Day
+
+# ----------------------------------------------------------------------------
+# Hidden Markov Model — regime detection
+# ----------------------------------------------------------------------------
+hmm:
+  n_candidates: [3, 4, 5, 6, 7]        # candidate state counts; best picked by BIC
+  n_init: 10                           # random restarts per fit (avoid local optima)
+  covariance_type: full                # full | diag | tied | spherical
+  min_train_bars: 252                  # min history before model is trusted (~1y daily)
+  stability_bars: 3                    # bars a new regime must persist before acting
+  flicker_window: 20                   # lookback window for flicker detection
+  flicker_threshold: 4                 # max regime switches in window before freeze
+  min_confidence: 0.55                 # min posterior prob to accept a regime label
+
+# ----------------------------------------------------------------------------
+# Strategy — volatility-based allocation
+# ----------------------------------------------------------------------------
+strategy:
+  low_vol_allocation: 0.95             # equity exposure in low-vol regime
+  mid_vol_allocation_trend: 0.95       # mid-vol, trend confirmed
+  mid_vol_allocation_no_trend: 0.60    # mid-vol, no trend
+  high_vol_allocation: 0.60            # high-vol regime (risk-off)
+  low_vol_leverage: 1.25               # leverage allowed only in low-vol regime
+  rebalance_threshold: 0.10            # drift from target before rebalancing (fraction)
+  uncertainty_size_mult: 0.50          # size multiplier when regime confidence is low
+
+# ----------------------------------------------------------------------------
+# Risk management — sizing, exposure, drawdown circuit breakers
+# ----------------------------------------------------------------------------
+risk:
+  max_risk_per_trade: 0.01             # fraction of equity risked on a single trade
+  max_exposure: 0.80                   # max gross exposure as fraction of equity
+  max_leverage: 1.25                   # hard leverage cap
+  max_single_position: 0.15            # max weight in any one symbol
+  max_concurrent: 5                    # max simultaneous open positions
+  max_daily_trades: 20                 # per-day trade cap
+  daily_dd_reduce: 0.02                # daily drawdown that triggers size reduction
+  daily_dd_halt: 0.03                  # daily drawdown that halts trading
+  weekly_dd_reduce: 0.05               # weekly drawdown that triggers size reduction
+  weekly_dd_halt: 0.07                 # weekly drawdown that halts trading
+  max_dd_from_peak: 0.10               # peak-to-trough drawdown kill switch
+
+# ----------------------------------------------------------------------------
+# Backtest — walk-forward parameters
+# ----------------------------------------------------------------------------
+backtest:
+  slippage_pct: 0.0005                 # per-side slippage assumption (5 bps)
+  initial_capital: 100000              # starting equity
+  train_window: 252                    # in-sample bars per fold
+  test_window: 126                     # out-of-sample bars per fold
+  step_size: 126                       # walk-forward advance per fold
+  risk_free_rate: 0.045                # annual rf for Sharpe/Sortino
+
+# ----------------------------------------------------------------------------
+# Monitoring — dashboard + alerts
+# ----------------------------------------------------------------------------
+monitoring:
+  dashboard_refresh_seconds: 5         # live dashboard refresh cadence
+  alert_rate_limit_minutes: 15         # min gap between repeat alerts of same type

@@ -1,0 +1,10 @@
+.env
+config/credentials.yaml
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+logs/
+.pytest_cache/
+.DS_Store
+*.egg-info/
