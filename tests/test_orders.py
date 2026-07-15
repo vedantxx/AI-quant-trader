@@ -21,10 +21,15 @@ class FakeTrading:
     def get_clock(self):
         return SimpleNamespace(is_open=True)
 
+    @staticmethod
+    def _f(req, name):
+        return req[name] if isinstance(req, dict) else getattr(req, name)
+
     def submit_order(self, req):
         self.calls.append(("submit", req))
-        return SimpleNamespace(id="ord-1", symbol=req["symbol"], side=req["side"],
-                               qty=req["qty"], status="accepted")
+        return SimpleNamespace(id="ord-1", symbol=self._f(req, "symbol"),
+                               side=self._f(req, "side"), qty=self._f(req, "qty"),
+                               status="accepted")
 
     def get_order_by_id(self, oid):
         return SimpleNamespace(id=oid, status=self.order_status, symbol="SPY",
@@ -47,7 +52,8 @@ class FakeTrading:
 
 
 def make_client() -> AlpacaClient:
-    return AlpacaClient(CFG, trading_client=FakeTrading(), data_client=object())
+    return AlpacaClient(CFG, trading_client=FakeTrading(), data_client=object(),
+                        max_retries=1)
 
 
 def make_signal(**kw) -> Signal:

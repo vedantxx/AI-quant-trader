@@ -96,9 +96,12 @@ class MarketData:
         df = getattr(bars, "df", bars)
         return self._clean_bars(df, symbol)
 
+    # free/IEX data feed rejects requests that include the most recent ~15 min
+    RECENT_DATA_CUSHION = timedelta(minutes=16)
+
     def history(self, symbol: str, lookback_days: int = 500) -> pd.DataFrame:
         """OHLCV history for a symbol, oldest-first, tz-naive index."""
-        end = datetime.now(timezone.utc)
+        end = datetime.now(timezone.utc) - self.RECENT_DATA_CUSHION
         start = end - timedelta(days=lookback_days)
         return self.get_historical_bars(symbol, self.timeframe_str, start, end)
 
