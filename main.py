@@ -67,8 +67,10 @@ class TradingSystem:
 
         self.cfg = cfg
         self.dry_run = dry_run
-        self.log = TradingLogger().get()
-        self.alert = AlertManager(cfg, load_credentials())
+        self.tlog = TradingLogger()
+        self.log = self.tlog.get()
+        self.alert = AlertManager(cfg, load_credentials(), log_sink=self.tlog.alert_log)
+        self.recent_signals: list[dict] = []
 
         self.symbols: list[str] = list(cfg["broker"]["symbols"])
         self.regime_symbol: str = cfg["broker"].get("regime_symbol", self.symbols[0])
@@ -171,7 +173,17 @@ class TradingSystem:
             self.alert.alert("hmm_error", "HMM prediction error", str(exc))
             return {"status": "hmm_error", "regime": str(self._last_regime)}
         flickering = self.hmm.is_flickering()
+        prev_regime = self._last_regime
         self._last_regime = state.label
+        self.tlog.set_context(regime=state.label, probability=round(state.probability, 4))
+        self.tlog.regime("regime", regime=state.label, probability=state.probability,
+                         stability=self.hmm.get_regime_stability(), flickering=flickering)
+        if prev_regime and prev_regime != state.label and state.is_confirmed:
+            self.alert.regime_change(prev_regime, state.label, state.probability)
+            self.log.warning("REGIME CHANGE %s -> %s", prev_regime, state.label)
+        if flickering:
+            self.alert.flicker_exceeded(self.hmm.get_regime_flicker_rate(),
+                                        self.hmm.flicker_threshold)
 
         # --- 6. target allocation per symbol
         self._refresh_portfolio_state(bars)
@@ -205,6 +217,7 @@ class TradingSystem:
             if qty <= 0:
                 continue
             approved += 1
+            self._record_signal(now, sig.symbol, ms, state.label)
             if self.dry_run:
                 self.log.info("DRY-RUN would submit %s x%d @~%.2f (alloc %.1f%% lev %.2f)",
                               sig.symbol, qty, price, ms.position_size_pct * 100, ms.leverage)
@@ -213,6 +226,8 @@ class TradingSystem:
                 self.state.recent_orders[(sig.symbol, sig.direction)] = now
                 self._n_orders += 1
                 self.log.info("ORDER %s %s x%d id=%s", res.side, res.symbol, qty, res.id)
+                self.tlog.trade("order", symbol=res.symbol, side=res.side, qty=qty,
+                                order_id=res.id, trade_id=res.trade_id, regime=state.label)
 
         # --- 8. trailing stops (tighten-only) per current regime
         self._update_stops(signals)
@@ -221,20 +236,61 @@ class TradingSystem:
         breaker = self.risk.breaker.evaluate(self.state)
         if breaker.close_all and not self.dry_run:
             self.executor.close_all_positions()
-            self.alert.alert("breaker", "Circuit breaker halt", breaker.reason)
+            self.alert.circuit_breaker(breaker.active, breaker.reason)
             self.log.error("CIRCUIT BREAKER halt: %s — flattened", breaker.reason)
 
-        # --- 10. dashboard
-        summary = {
+        # --- 10. dashboard state
+        return self._dashboard_state(state, breaker, regime_bars, signals,
+                                     approved, rejected, modified)
+
+    def _record_signal(self, now, symbol, ms, regime) -> None:
+        self.recent_signals.append({
+            "time": now.strftime("%H:%M"), "symbol": symbol,
+            "change": f"{ms.position_size_pct:.0%} @ {ms.leverage:.2f}x",
+            "reason": regime})
+        self.recent_signals = self.recent_signals[-20:]
+
+    def _dashboard_state(self, state, breaker, regime_bars, signals,
+                         approved, rejected, modified) -> dict:
+        day0 = self.state.day_start_equity or self.state.equity
+        daily_pnl = self.state.equity - day0
+        lead = signals[0] if signals else None
+        positions = [{
+            "symbol": s, "side": "LONG", "price": p.entry_price,
+            "pnl_pct": 0.0, "stop": p.stop_loss, "held": "—",
+        } for s, p in self.state.positions.items()]
+        return {
             "status": "ok", "regime": state.label, "regime_prob": state.probability,
-            "uncertainty": self.state.regime_uncertain, "equity": self.state.equity,
-            "cash": self.state.cash, "buying_power": self.state.buying_power,
+            "stability_bars": self.hmm.get_regime_stability(),
+            "flicker": self.hmm.get_regime_flicker_rate(),
+            "flicker_window": self.hmm.flicker_window,
+            "uncertainty": self.state.regime_uncertain,
+            "equity": self.state.equity, "cash": self.state.cash,
+            "buying_power": self.state.buying_power,
+            "daily_pnl": daily_pnl, "daily_pnl_pct": daily_pnl / day0 if day0 else 0.0,
+            "allocation": lead.position_size_pct if lead else 0.0,
+            "leverage": lead.leverage if lead else 1.0,
             "drawdown": self.state.drawdown, "breaker": breaker.active,
-            "open_positions": len(self.state.positions), "trades_today": self.state.trades_today,
+            "daily_dd": abs(min(0.0, daily_pnl / day0 if day0 else 0.0)),
+            "daily_dd_limit": self.risk.breaker.daily_halt,
+            "peak_dd": abs(min(0.0, self.state.drawdown)),
+            "peak_dd_limit": self.risk.breaker.peak_halt,
+            "open_positions": len(self.state.positions),
+            "positions": positions, "recent_signals": self.recent_signals,
+            "trades_today": self.state.trades_today,
             "approved": approved, "rejected": rejected, "modified": modified,
+            "hmm_age": self._hmm_age_str(), "paper": self.client.paper,
+            "data_ok": True, "api_ok": True, "api_ms": 0.0,
             "last_bar": str(regime_bars.index[-1].date()),
         }
-        return summary
+
+    def _hmm_age_str(self) -> str:
+        try:
+            td = self.hmm.metadata.training_date
+            days = (datetime.now(timezone.utc) - datetime.fromisoformat(td)).days
+            return f"{days}d ago"
+        except Exception:  # noqa: BLE001
+            return "—"
 
     # --------------------------------------------------------------- main loop
     def run(self, poll_seconds: float | None = None, max_iterations: int | None = None) -> None:
