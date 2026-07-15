@@ -210,23 +210,39 @@ class TradingSystem:
                 self.log.info("REJECT %s: %s", sig.symbol, decision.rejection_reason)
                 continue
             ms = decision.modified_signal
-            qty = int(ms.position_size_pct * self.state.equity / price)
+
+            # rebalance gate: only trade when target allocation drifts > threshold
+            cur = self.state.positions.get(sig.symbol)
+            cur_weight = cur.weight if cur else 0.0
+            target = ms.position_size_pct
+            if not self.orchestrator.needs_rebalance(cur_weight, target):
+                continue
             if decision.modifications:
                 modified += 1
                 self.log.info("MODIFY %s: %s", sig.symbol, "; ".join(decision.modifications))
-            if qty <= 0:
+
+            # order the DELTA between target and current shares
+            target_shares = int(target * self.state.equity / price)
+            cur_shares = int(round(cur_weight * self.state.equity / price))
+            delta = target_shares - cur_shares
+            if delta == 0:
                 continue
+            side = "buy" if delta > 0 else "sell"
             approved += 1
             self._record_signal(now, sig.symbol, ms, state.label)
             if self.dry_run:
-                self.log.info("DRY-RUN would submit %s x%d @~%.2f (alloc %.1f%% lev %.2f)",
-                              sig.symbol, qty, price, ms.position_size_pct * 100, ms.leverage)
+                self.log.info("DRY-RUN would %s %s x%d @~%.2f (target %.1f%% from %.1f%%)",
+                              side, sig.symbol, abs(delta), price, target * 100, cur_weight * 100)
             else:
-                res = self.executor.submit_order(ms, qty=qty, risk_modifications=decision.modifications)
+                if delta > 0:
+                    res = self.executor.submit_order(ms, qty=delta,
+                                                     risk_modifications=decision.modifications)
+                else:
+                    res = self.executor.submit_market(sig.symbol, -delta, "sell")
                 self.state.recent_orders[(sig.symbol, sig.direction)] = now
                 self._n_orders += 1
-                self.log.info("ORDER %s %s x%d id=%s", res.side, res.symbol, qty, res.id)
-                self.tlog.trade("order", symbol=res.symbol, side=res.side, qty=qty,
+                self.log.info("ORDER %s %s x%d id=%s", res.side, res.symbol, abs(delta), res.id)
+                self.tlog.trade("order", symbol=res.symbol, side=side, qty=abs(delta),
                                 order_id=res.id, trade_id=res.trade_id, regime=state.label)
 
         # --- 8. trailing stops (tighten-only) per current regime

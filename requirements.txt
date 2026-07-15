@@ -7,6 +7,7 @@ alpaca-py>=0.43.5
 python-dotenv>=1.2.2
 PyYAML>=6.0.1
 rich>=13.7.1
+streamlit>=1.37.1
 
 # dev / test
 pytest>=8.0
