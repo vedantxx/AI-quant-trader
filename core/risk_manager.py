@@ -281,6 +281,10 @@ class RiskManager:
         mods: list[str] = []
         equity = state.equity
 
+        # ---- guard: no equity means nothing can be sized
+        if equity <= 0:
+            return RiskDecision(False, None, "no equity", mods)
+
         # ---- 0. hard halts (lock file / breaker)
         breaker = self.breaker.evaluate(state)
         if breaker.halt:

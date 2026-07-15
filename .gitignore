@@ -11,5 +11,7 @@ logs/
 # runtime artifacts
 trading_halted.lock
 backtest_output/
+models/
+state_snapshot.json
 *.env
 .env.*

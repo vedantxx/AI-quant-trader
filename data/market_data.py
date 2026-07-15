@@ -75,7 +75,8 @@ class MarketData:
                 out = out.droplevel(0)
         out.columns = [c.lower() for c in out.columns]
         out = out[[c for c in _OHLCV if c in out.columns]]
-        out.index = pd.to_datetime(out.index).tz_localize(None)
+        idx = pd.to_datetime(out.index)
+        out.index = idx.tz_localize(None) if idx.tz is not None else idx
         out = out[~out.index.duplicated(keep="last")].sort_index()
         return out
 
