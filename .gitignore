@@ -8,3 +8,8 @@ logs/
 .pytest_cache/
 .DS_Store
 *.egg-info/
+# runtime artifacts
+trading_halted.lock
+backtest_output/
+*.env
+.env.*
