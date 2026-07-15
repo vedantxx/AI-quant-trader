@@ -1,13 +1,12 @@
-hmmlearn
-alpaca-trade-api
-alpaca-py
-pandas
-numpy
-scipy
-ta
-scikit-learn
-pyyaml
-python-dotenv
-websocket-client
-schedule
-rich
+# AI-Quant-trader dependencies (minimums verified against this build)
+numpy>=1.26.4
+pandas>=2.2.2
+scipy>=1.13.1
+hmmlearn>=0.3.3
+alpaca-py>=0.43.5
+python-dotenv>=1.2.2
+PyYAML>=6.0.1
+rich>=13.7.1
+
+# dev / test
+pytest>=8.0
