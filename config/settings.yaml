@@ -51,6 +51,18 @@ risk:
   weekly_dd_reduce: 0.05               # weekly drawdown that triggers size reduction
   weekly_dd_halt: 0.07                 # weekly drawdown that halts trading
   max_dd_from_peak: 0.10               # peak-to-trough drawdown kill switch
+  # --- Phase 5: position/portfolio risk layer ---
+  size_reduce_factor: 0.50             # size multiplier when a reduce breaker fires
+  min_position_usd: 100                # minimum dollar position; smaller -> reject
+  max_sector_exposure: 0.30            # max gross weight in any one sector
+  correlation_window: 60               # rolling window (days) for correlation check
+  correlation_reduce: 0.70             # correlation above this halves size
+  correlation_reject: 0.85             # correlation above this rejects the trade
+  max_spread_pct: 0.005                # max bid-ask spread (fraction) to allow an order
+  duplicate_window_seconds: 60         # block same symbol+direction within this window
+  gap_multiple: 3.0                    # assumed overnight stop gap-through multiple
+  overnight_gap_risk_pct: 0.02         # max portfolio loss if the 3x gap hits overnight
+  halt_lock_file: trading_halted.lock  # written on peak-DD halt; manual delete to resume
 
 # ----------------------------------------------------------------------------
 # Backtest — walk-forward parameters
