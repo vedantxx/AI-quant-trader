@@ -21,9 +21,20 @@ import time
 import traceback
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import yaml
+
+EASTERN = ZoneInfo("America/New_York")  # US market timezone (DST-aware)
+
+
+def _et(dt: datetime) -> datetime:
+    """Convert a datetime to US/Eastern (handles EST/EDT automatically)."""
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(EASTERN)
+
 
 ROOT = Path(__file__).parent
 CONFIG_PATH = ROOT / "config" / "settings.yaml"
@@ -266,9 +277,9 @@ class TradingSystem:
                                      approved, rejected, modified)
 
     def _feed(self, now, symbol: str, change: str, reason: str) -> None:
-        """Append a decision (buy/sell/hold/reject) to the signal feed."""
+        """Append a decision (buy/sell/hold/reject) to the signal feed (ET time)."""
         self.recent_signals.append({
-            "time": now.strftime("%H:%M:%S"), "symbol": symbol,
+            "time": _et(now).strftime("%H:%M:%S %Z"), "symbol": symbol,
             "change": change, "reason": reason})
         self.recent_signals = self.recent_signals[-20:]
 
@@ -304,6 +315,7 @@ class TradingSystem:
             "hmm_age": self._hmm_age_str(), "paper": self.client.paper,
             "data_ok": True, "api_ok": True, "api_ms": 0.0,
             "last_bar": str(regime_bars.index[-1].date()),
+            "updated": _et(datetime.now(timezone.utc)).strftime("%Y-%m-%d %H:%M:%S %Z"),
         }
 
     def _hmm_age_str(self) -> str:

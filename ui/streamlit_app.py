@@ -161,7 +161,10 @@ system.dry_run = dry_run  # honor toggle without full restart
 
 if step or auto:
     with st.spinner("Running pipeline iteration…"):
-        st.session_state.summary = system.run_once()
+        try:
+            st.session_state.summary = system.run_once()
+        except Exception as exc:  # noqa: BLE001 - keep the loop alive on a transient error
+            st.warning(f"Iteration error (will retry): {exc}")
 
 s = st.session_state.get("summary", {})
 
@@ -169,7 +172,11 @@ s = st.session_state.get("summary", {})
 mode = "PAPER" if s.get("paper", True) else "LIVE"
 order_mode = "DRY-RUN" if dry_run else "LIVE-ORDER"
 st.title("📈 AI-Quant-Trader")
-st.caption(f"{mode} · {order_mode} · regime symbol {regime_symbol} · last bar {s.get('last_bar', '—')}")
+st.caption(f"{mode} · {order_mode} · regime symbol {regime_symbol} · "
+           f"last bar {s.get('last_bar', '—')} · updated {s.get('updated', '—')}")
+if not auto:
+    st.caption("↻ Auto-refresh is OFF — enable it in the sidebar for a live feed, "
+               "or click **Run once**.")
 
 if s.get("status") == "no_equity":
     st.error("Account equity is $0 — reset/refund the paper account. Holding (no sizing).")
