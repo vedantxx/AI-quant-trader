@@ -140,8 +140,20 @@ if start or "system" not in st.session_state:
         st.stop()
     with st.spinner("Training HMM and connecting to broker…"):
         cfg = _fast_cfg(base_cfg, fast, symbols, regime_symbol)
-        st.session_state.system = _init_system(cfg, dry_run)
-        st.session_state.summary = st.session_state.system.run_once()
+        try:
+            st.session_state.system = _init_system(cfg, dry_run)
+            st.session_state.summary = st.session_state.system.run_once()
+        except ImportError as exc:
+            st.error(
+                f"A required package failed to import: `{exc}`.\n\n"
+                "`hmmlearn` ships wheels only for **Python 3.11 / 3.12**. In "
+                "**Manage app → Settings**, set the Python version to **3.12** "
+                "(or recreate the app choosing 3.12), then **Reboot**."
+            )
+            st.stop()
+        except Exception as exc:  # noqa: BLE001 - surface any startup failure cleanly
+            st.error(f"Startup failed: {exc}")
+            st.stop()
     st.success("System online.")
 
 system = st.session_state.system
