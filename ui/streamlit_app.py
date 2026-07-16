@@ -76,6 +76,28 @@ def _fast_cfg(base: dict, fast: bool, symbols: list[str], regime_symbol: str) ->
     return cfg
 
 
+def _load_secrets_into_env() -> None:
+    """Copy Alpaca keys from Streamlit secrets into the environment.
+
+    On Streamlit Cloud, secrets are set in the dashboard (Settings -> Secrets);
+    AlpacaClient reads them from os.environ. Locally, .env already populated it.
+    """
+    for key in ("ALPACA_API_KEY", "ALPACA_SECRET_KEY"):
+        if os.getenv(key):
+            continue
+        try:
+            val = st.secrets.get(key)
+        except Exception:
+            val = None
+        if val:
+            os.environ[key] = str(val)
+
+
+def _creds_present() -> bool:
+    _load_secrets_into_env()
+    return bool(os.getenv("ALPACA_API_KEY") and os.getenv("ALPACA_SECRET_KEY"))
+
+
 def _init_system(cfg: dict, dry_run: bool):
     sysm = app.TradingSystem(cfg, dry_run=dry_run)
     sysm.startup()
@@ -101,6 +123,17 @@ start = c1.button("▶ Start / Retrain", use_container_width=True)
 step = c2.button("↻ Run once", use_container_width=True)
 
 # ------------------------------------------------------------------- lifecycle
+if not _creds_present():
+    st.error(
+        "Alpaca API keys not found. On Streamlit Cloud, open **Manage app → "
+        "Settings → Secrets** and add:\n\n"
+        "```toml\nALPACA_API_KEY = \"your_paper_key\"\n"
+        "ALPACA_SECRET_KEY = \"your_paper_secret\"\n"
+        "APP_PASSWORD = \"a-strong-password\"\n```\n\n"
+        "Save, then rerun. Locally, put them in `.env` instead."
+    )
+    st.stop()
+
 if start or "system" not in st.session_state:
     if not symbols:
         st.warning("Select at least one symbol.")
