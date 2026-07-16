@@ -15,6 +15,7 @@ AlpacaClient.
 from __future__ import annotations
 
 import copy
+import os
 import sys
 import time
 from pathlib import Path
@@ -32,6 +33,35 @@ import main as app  # noqa: E402
 load_dotenv(dotenv_path=str(ROOT / ".env"))
 
 st.set_page_config(page_title="AI-Quant-Trader", page_icon="📈", layout="wide")
+
+
+def _app_password() -> str | None:
+    """Password from Streamlit secrets or env (None -> open, local dev only)."""
+    try:
+        pw = st.secrets.get("APP_PASSWORD")
+    except Exception:  # no secrets file configured
+        pw = None
+    return pw or os.getenv("APP_PASSWORD")
+
+
+def _require_auth() -> bool:
+    """Gate the app behind a password when one is configured (public hosting)."""
+    pw = _app_password()
+    if not pw:
+        return True  # no password set: unrestricted (intended for local runs)
+    if st.session_state.get("authed"):
+        return True
+    st.title("🔒 AI-Quant-Trader")
+    with st.form("login"):
+        entered = st.text_input("Password", type="password")
+        if st.form_submit_button("Enter") and entered == pw:
+            st.session_state.authed = True
+            st.rerun()
+    return bool(st.session_state.get("authed"))
+
+
+if not _require_auth():
+    st.stop()
 
 
 def _fast_cfg(base: dict, fast: bool, symbols: list[str], regime_symbol: str) -> dict:
