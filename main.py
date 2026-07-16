@@ -208,14 +208,18 @@ class TradingSystem:
             if not decision.approved:
                 rejected += 1
                 self.log.info("REJECT %s: %s", sig.symbol, decision.rejection_reason)
+                self._feed(now, sig.symbol, "REJECT", decision.rejection_reason)
                 continue
             ms = decision.modified_signal
 
-            # rebalance gate: only trade when target allocation drifts > threshold
             cur = self.state.positions.get(sig.symbol)
             cur_weight = cur.weight if cur else 0.0
             target = ms.position_size_pct
-            if not self.orchestrator.needs_rebalance(cur_weight, target):
+            # rebalance gate: trade on a fresh entry, or when drift > threshold.
+            # (a flat->small target is a real entry, not churn, so don't gate it out)
+            is_entry = cur_weight <= 1e-9 and target > 0
+            if not is_entry and not self.orchestrator.needs_rebalance(cur_weight, target):
+                self._feed(now, sig.symbol, "HOLD", f"{cur_weight:.0%}~{target:.0%} (in band)")
                 continue
             if decision.modifications:
                 modified += 1
@@ -226,10 +230,12 @@ class TradingSystem:
             cur_shares = int(round(cur_weight * self.state.equity / price))
             delta = target_shares - cur_shares
             if delta == 0:
+                self._feed(now, sig.symbol, "HOLD", "no share delta")
                 continue
             side = "buy" if delta > 0 else "sell"
             approved += 1
-            self._record_signal(now, sig.symbol, ms, state.label)
+            self._feed(now, sig.symbol, side.upper(),
+                       f"{cur_weight:.0%}->{target:.0%} x{abs(delta)}")
             if self.dry_run:
                 self.log.info("DRY-RUN would %s %s x%d @~%.2f (target %.1f%% from %.1f%%)",
                               side, sig.symbol, abs(delta), price, target * 100, cur_weight * 100)
@@ -259,11 +265,11 @@ class TradingSystem:
         return self._dashboard_state(state, breaker, regime_bars, signals,
                                      approved, rejected, modified)
 
-    def _record_signal(self, now, symbol, ms, regime) -> None:
+    def _feed(self, now, symbol: str, change: str, reason: str) -> None:
+        """Append a decision (buy/sell/hold/reject) to the signal feed."""
         self.recent_signals.append({
-            "time": now.strftime("%H:%M"), "symbol": symbol,
-            "change": f"{ms.position_size_pct:.0%} @ {ms.leverage:.2f}x",
-            "reason": regime})
+            "time": now.strftime("%H:%M:%S"), "symbol": symbol,
+            "change": change, "reason": reason})
         self.recent_signals = self.recent_signals[-20:]
 
     def _dashboard_state(self, state, breaker, regime_bars, signals,
