@@ -16,3 +16,6 @@ models/
 state_snapshot.json
 *.env
 .env.*
+
+# strategy-tester data cache
+strategy-tester/data/
