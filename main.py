@@ -82,6 +82,7 @@ class TradingSystem:
         self.log = self.tlog.get()
         self.alert = AlertManager(cfg, load_credentials(), log_sink=self.tlog.alert_log)
         self.recent_signals: list[dict] = []
+        self._last_records: list[dict] = []
 
         self.symbols: list[str] = list(cfg["broker"]["symbols"])
         self.regime_symbol: str = cfg["broker"].get("regime_symbol", self.symbols[0])
@@ -212,51 +213,31 @@ class TradingSystem:
 
         # --- 7. risk gate + order routing
         approved = rejected = modified = 0
-        for sig in signals:
-            price = float(bars[sig.symbol]["close"].iloc[-1])
-            self._annotate(sig, price)
-            decision = self.risk.validate_signal(sig, self.state, now=now)
-            if not decision.approved:
+        self._last_records = [self._evaluate_symbol(sig, bars, now) for sig in signals]
+        for rec in self._last_records:
+            self._feed(now, rec["symbol"], rec["action"], rec["reason"])
+            if rec["action"] == "REJECT":
                 rejected += 1
-                self.log.info("REJECT %s: %s", sig.symbol, decision.rejection_reason)
-                self._feed(now, sig.symbol, "REJECT", decision.rejection_reason)
+                self.log.info("REJECT %s: %s", rec["symbol"], rec["reason"])
                 continue
-            ms = decision.modified_signal
-
-            cur = self.state.positions.get(sig.symbol)
-            cur_weight = cur.weight if cur else 0.0
-            target = ms.position_size_pct
-            # rebalance gate: trade on a fresh entry, or when drift > threshold.
-            # (a flat->small target is a real entry, not churn, so don't gate it out)
-            is_entry = cur_weight <= 1e-9 and target > 0
-            if not is_entry and not self.orchestrator.needs_rebalance(cur_weight, target):
-                self._feed(now, sig.symbol, "HOLD", f"{cur_weight:.0%}~{target:.0%} (in band)")
+            if rec["action"] == "HOLD":
                 continue
-            if decision.modifications:
+            if rec["modifications"]:
                 modified += 1
-                self.log.info("MODIFY %s: %s", sig.symbol, "; ".join(decision.modifications))
-
-            # order the DELTA between target and current shares
-            target_shares = int(target * self.state.equity / price)
-            cur_shares = int(round(cur_weight * self.state.equity / price))
-            delta = target_shares - cur_shares
-            if delta == 0:
-                self._feed(now, sig.symbol, "HOLD", "no share delta")
-                continue
-            side = "buy" if delta > 0 else "sell"
+                self.log.info("MODIFY %s: %s", rec["symbol"], "; ".join(rec["modifications"]))
             approved += 1
-            self._feed(now, sig.symbol, side.upper(),
-                       f"{cur_weight:.0%}->{target:.0%} x{abs(delta)}")
+            side, delta, ms = rec["side"], rec["delta"], rec["ms"]
             if self.dry_run:
                 self.log.info("DRY-RUN would %s %s x%d @~%.2f (target %.1f%% from %.1f%%)",
-                              side, sig.symbol, abs(delta), price, target * 100, cur_weight * 100)
+                              side, rec["symbol"], abs(delta), rec["price"],
+                              rec["target"] * 100, rec["current"] * 100)
             else:
                 if delta > 0:
                     res = self.executor.submit_order(ms, qty=delta,
-                                                     risk_modifications=decision.modifications)
+                                                     risk_modifications=rec["modifications"])
                 else:
-                    res = self.executor.submit_market(sig.symbol, -delta, "sell")
-                self.state.recent_orders[(sig.symbol, sig.direction)] = now
+                    res = self.executor.submit_market(rec["symbol"], -delta, "sell")
+                self.state.recent_orders[(rec["symbol"], "LONG")] = now
                 self._n_orders += 1
                 self.log.info("ORDER %s %s x%d id=%s", res.side, res.symbol, abs(delta), res.id)
                 self.tlog.trade("order", symbol=res.symbol, side=side, qty=abs(delta),
@@ -282,6 +263,195 @@ class TradingSystem:
             "time": _et(now).strftime("%H:%M:%S %Z"), "symbol": symbol,
             "change": change, "reason": reason})
         self.recent_signals = self.recent_signals[-20:]
+
+    def _evaluate_symbol(self, sig, bars, now) -> dict:
+        """Pure per-symbol decision (no order side effects). Used by the loop
+        and the read-only dashboard snapshot."""
+        price = float(bars[sig.symbol]["close"].iloc[-1])
+        self._annotate(sig, price)
+        decision = self.risk.validate_signal(sig, self.state, now=now)
+        cur = self.state.positions.get(sig.symbol)
+        cur_weight = cur.weight if cur else 0.0
+        rec = {
+            "symbol": sig.symbol, "price": price, "current": cur_weight, "target": 0.0,
+            "delta": 0, "side": "", "stop": sig.stop_loss, "regime": sig.regime_name,
+            "confidence": sig.regime_probability, "leverage": sig.leverage,
+            "modifications": decision.modifications, "ms": decision.modified_signal,
+            "rebalance": False,
+        }
+        if not decision.approved:
+            rec.update(action="REJECT", reason=decision.rejection_reason)
+            return rec
+        ms = decision.modified_signal
+        target = ms.position_size_pct
+        rec.update(target=target, leverage=ms.leverage)
+        is_entry = cur_weight <= 1e-9 and target > 0
+        if not is_entry and not self.orchestrator.needs_rebalance(cur_weight, target):
+            rec.update(action="HOLD", reason=f"{cur_weight:.0%}~{target:.0%} (in band)")
+            return rec
+        target_shares = int(target * self.state.equity / price)
+        cur_shares = int(round(cur_weight * self.state.equity / price))
+        delta = target_shares - cur_shares
+        if delta == 0:
+            rec.update(action="HOLD", reason="no share delta")
+            return rec
+        rec.update(action="BUY" if delta > 0 else "SELL", side="buy" if delta > 0 else "sell",
+                   delta=delta, rebalance=True,
+                   reason=f"{cur_weight:.0%}->{target:.0%} x{abs(delta)}")
+        return rec
+
+    # =============================================== read-only dashboard snapshot
+    def snapshot(self) -> dict:
+        """Full read-only view of the system for the dashboard. Places no orders
+        and does NOT advance the stateful HMM filter (uses the pure posterior)."""
+        from core.hmm_engine import RegimeState
+
+        now = datetime.now(timezone.utc)
+        if self.orchestrator is None:
+            from core.regime_strategies import StrategyOrchestrator
+            self.orchestrator = StrategyOrchestrator(self.cfg, self.hmm.regime_info)
+
+        bars = {s: self.market.history(s, lookback_days=1000) for s in self.symbols}
+        regime_bars = bars[self.regime_symbol]
+        feats = self.fe.build_features(regime_bars)
+        proba = self.hmm.predict_regime_proba(feats.to_numpy(dtype=float))  # pure
+        sid = int(proba.argmax())
+        label = self.hmm.state_to_label.get(sid, "?")
+        state = RegimeState(label=label, state_id=sid, probability=float(proba[sid]),
+                            state_probabilities=proba, timestamp=now,
+                            is_flickering=self.hmm.is_flickering(),
+                            consecutive_bars=self.hmm.get_regime_stability())
+
+        self._refresh_portfolio_state(bars)
+        signals = self.orchestrator.generate_signals(
+            self.symbols, bars, state, is_flickering=state.is_flickering)
+        by_symbol = {s.symbol: s for s in signals}
+        records = [self._evaluate_symbol(sig, bars, now) for sig in signals]
+
+        rows = []
+        for r in records:
+            pos = self.state.positions.get(r["symbol"])
+            tp = self.tracker.tracked.get(r["symbol"])
+            rows.append({
+                "symbol": r["symbol"], "action": r["action"], "target": r["target"],
+                "current": r["current"], "drift": r["target"] - r["current"],
+                "regime": label, "confidence": state.probability, "price": r["price"],
+                "entry": pos.entry_price if pos else 0.0,
+                "pnl_pct": (r["price"] / pos.entry_price - 1) if (pos and pos.entry_price) else 0.0,
+                "stop": r["stop"], "held": (f"{tp.holding_period(now):.1f}d" if tp else "—"),
+                "leverage": r["leverage"], "rebalance": r["rebalance"], "reason": r["reason"],
+            })
+
+        eq = self.state.equity
+        day0 = self.state.day_start_equity or eq
+        gross = self.state.gross_exposure()
+        return {
+            "ts": now,
+            "topbar": {
+                "mode": "PAPER" if self.client.paper else "LIVE",
+                "market_open": self._market_open_safe(),
+                "equity": eq, "cash": self.state.cash,
+                "buying_power": self.state.buying_power,
+                "daily_pnl": eq - day0, "daily_pnl_pct": (eq - day0) / day0 if day0 else 0.0,
+                "exposure": gross, "regime": label, "regime_prob": state.probability,
+                "hmm_age": self._hmm_age_str(),
+                "updated": _et(now).strftime("%Y-%m-%d %H:%M:%S %Z"),
+                "dry_run": self.dry_run,
+            },
+            "regime": {
+                "label": label, "prob": state.probability,
+                "stability": self.hmm.get_regime_stability(),
+                "flicker": self.hmm.get_regime_flicker_rate(),
+                "flicker_window": self.hmm.flicker_window,
+                "uncertain": state.probability < self.hmm.min_confidence or state.is_flickering,
+                "probs": {self.hmm.state_to_label.get(i, str(i)): float(p)
+                          for i, p in enumerate(proba)},
+            },
+            "vol_rank": self._vol_rank_map(),
+            "symbols": rows,
+            "regime_symbol": self.regime_symbol,
+            "orders": self._orders_table(),
+            "breaker_history": [vars(e) for e in self.risk.breaker.get_history()],
+            "exposure_by_symbol": {s: p.weight for s, p in self.state.positions.items()},
+            "exposure_by_sector": self._exposure_by_sector(),
+            "correlation": self._correlation_df(),
+            "transition": self._transition_df(),
+            "model": self.model_info(),
+            "recent_signals": list(self.recent_signals),
+            "positions": rows,
+            "risk_cfg": {
+                "daily_halt": self.risk.breaker.daily_halt,
+                "weekly_halt": self.risk.breaker.weekly_halt,
+                "peak_halt": self.risk.breaker.peak_halt,
+                "max_leverage": self.risk.max_leverage,
+                "max_single": self.risk.max_single_position,
+                "max_exposure": self.risk.max_exposure,
+                "max_sector": self.risk.max_sector_exposure,
+            },
+            "drawdown": {"daily": abs(min(0.0, (eq - day0) / day0 if day0 else 0.0)),
+                         "peak": abs(min(0.0, self.state.drawdown))},
+        }
+
+    # ----------------------------------------------------- snapshot accessors
+    def _vol_rank_map(self) -> list[dict]:
+        infos = list(self.hmm.regime_info.values())
+        by_vol = sorted(infos, key=lambda r: r.expected_volatility)
+        n = len(by_vol)
+        strat_name = {id(self.orchestrator.low): "LowVolBull",
+                      id(self.orchestrator.mid): "MidVolCautious",
+                      id(self.orchestrator.high): "HighVolDefensive"}
+        out = []
+        for rank, info in enumerate(by_vol):
+            pos = rank / (n - 1) if n > 1 else 0.0
+            strat = self.orchestrator.strategy_for(info.regime_id)
+            out.append({"regime": info.regime_name, "expected_vol": info.expected_volatility,
+                        "expected_return": info.expected_return, "vol_rank": round(pos, 2),
+                        "strategy": strat_name.get(id(strat), "—")})
+        return out
+
+    def _orders_table(self) -> list[dict]:
+        out = []
+        for tid, link in self.executor.trades.items():
+            out.append({"trade_id": tid[:8], "symbol": link.symbol, "side": link.side,
+                        "qty": link.qty, "status": link.status, "order_id": link.order_id[:8],
+                        "mods": "; ".join(link.risk_modifications)})
+        return out
+
+    def _exposure_by_sector(self) -> dict:
+        out: dict[str, float] = {}
+        for p in self.state.positions.values():
+            out[p.sector] = out.get(p.sector, 0.0) + p.weight
+        return out
+
+    def _correlation_df(self):
+        hist = self.state.price_history
+        syms = [s for s in self.symbols if s in hist]
+        if len(syms) < 2:
+            return None
+        rets = pd.DataFrame({s: pd.Series(hist[s]).pct_change() for s in syms}).dropna()
+        return rets.tail(self.risk.corr_window).corr().round(2) if len(rets) else None
+
+    def _transition_df(self):
+        try:
+            mat = self.hmm.get_transition_matrix()
+        except Exception:  # noqa: BLE001
+            return None
+        labels = [self.hmm.state_to_label.get(i, str(i)) for i in range(len(mat))]
+        return pd.DataFrame(mat, index=labels, columns=labels).round(3)
+
+    def model_info(self) -> dict:
+        m = self.hmm.metadata
+        if m is None:
+            return {}
+        try:
+            age = (datetime.now(timezone.utc)
+                   - datetime.fromisoformat(m.training_date)).days
+        except Exception:  # noqa: BLE001
+            age = None
+        return {"n_regimes": m.n_regimes, "bic": m.bic, "all_bic": dict(m.all_bic),
+                "training_date": m.training_date, "labels": list(m.labels),
+                "feature_dim": m.feature_dim, "log_likelihood": m.log_likelihood,
+                "converged": m.converged, "iterations": m.iterations, "age_days": age}
 
     def _dashboard_state(self, state, breaker, regime_bars, signals,
                          approved, rejected, modified) -> dict:
