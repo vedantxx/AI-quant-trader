@@ -115,10 +115,16 @@ def risk_bar(label: str, value: float, limit: float) -> None:
 _ACTION_COLOR = {"BUY": "#2ecc71", "SELL": "#f2c94c", "HOLD": "#8b98a9", "REJECT": "#ff5c5c"}
 
 
+def _smap(styler, func, **kw):
+    """Styler.map added in pandas 2.1; fall back to applymap on older Cloud envs."""
+    fn = getattr(styler, "map", None) or styler.applymap
+    return fn(func, **kw)
+
+
 def style_actions(df: pd.DataFrame, col: str = "action"):
     def _c(v):
         return f'color:{_ACTION_COLOR.get(v, "#e6edf3")};font-weight:600'
-    return df.style.map(_c, subset=[col]) if col in df.columns else df.style
+    return _smap(df.style, _c, subset=[col]) if col in df.columns else df.style
 
 
 def heatmap(df: pd.DataFrame):
@@ -129,7 +135,7 @@ def heatmap(df: pd.DataFrame):
         t = max(-1.0, min(1.0, float(v)))
         r, g = int(255 * (1 - (t + 1) / 2)), int(255 * ((t + 1) / 2))
         return f"background-color: rgba({r},{g},90,0.32)"
-    return df.style.map(_bg).format("{:.2f}")
+    return _smap(df.style, _bg).format("{:.2f}")
 
 
 def mono_heat(df: pd.DataFrame, rgb: str = "76,201,240"):
@@ -137,7 +143,7 @@ def mono_heat(df: pd.DataFrame, rgb: str = "76,201,240"):
     def _bg(v):
         a = max(0.0, min(1.0, float(v))) * 0.5 if not pd.isna(v) else 0.0
         return f"background-color: rgba({rgb},{a})"
-    return df.style.map(_bg).format("{:.2f}")
+    return _smap(df.style, _bg).format("{:.2f}")
 
 
 def empty(msg: str) -> None:
