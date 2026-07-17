@@ -2,3 +2,4 @@ yfinance>=0.2.55
 numpy>=1.26
 pandas>=2.2
 certifi>=2024.0   # CA bundle for Polygon urllib call (python.org builds lack system certs)
+PyMySQL>=1.1      # local MySQL storage (bars, sweep, robustness results)

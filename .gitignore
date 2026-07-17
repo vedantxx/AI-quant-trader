@@ -20,3 +20,5 @@ state_snapshot.json
 # strategy-tester data cache
 strategy-tester/data/
 strategy-tester/sweep_results.csv
+strategy-tester/param_sensitivity.csv
+strategy-tester/bootstrap_results.csv

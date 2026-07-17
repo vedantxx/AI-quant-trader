@@ -76,7 +76,44 @@ python layer2_backtest.py --cost 0.0002 --crypto-cost 0.001
 python layer2_backtest.py --min-sharpe 0.4 --reuse # re-funnel a saved sweep
 ```
 
-## Layers 3–4 (next)
+## Layer 3 — Robustness Checks (`layer3_robustness.py`)
 
-3. Regime routing + combine uncorrelated survivors, realistic costs deeper.
-4. Robustness checks + final survivor ranking → the signal engine.
+A strategy can survive the funnel and still be fragile — working by luck or on
+one magic setting. Two checks catch it:
+
+- **Parameter sensitivity.** Per family, the spread of OOS Sharpe across all its
+  settings: mean, std, fraction positive. `robust = mean > 0 and ≥60% of
+  settings positive` — a tight, mostly-positive spread means the edge is real,
+  not curve-fit to one lucky number.
+- **Bootstrap stress test.** For each funnel survivor, resample its OOS daily
+  returns with replacement (default 200×) → a distribution of outcomes instead
+  of the one path history took. Reports p5/p50/p95 Sharpe and the worst-case
+  drawdown, and flags each survivor **solid** or **fragile** (fragile = worst
+  bootstrap DD below −40%, configurable).
+
+Writes `param_sensitivity` and `bootstrap_results` to MySQL and to CSV for
+charting.
+
+```bash
+python layer3_robustness.py
+python layer3_robustness.py --n-boot 500 --fragile-dd -0.35
+```
+
+## Storage — local MySQL
+
+All artifacts live in a local MySQL database (`strategy_tester`), CSV is only a
+fallback when the server is down:
+
+- `bars` — OHLCV per (ticker, dt)
+- `sweep_results` — every config × asset backtest (Layer 2)
+- `param_sensitivity`, `bootstrap_results` — robustness (Layer 3)
+
+Connection is read from repo-root `.env` (`DB_HOST`/`DB_PORT`/`DB_USER`/
+`DB_PASSWORD`/`DB_NAME`) with local-dev defaults (`127.0.0.1:3306`, `root`, no
+password, `strategy_tester`). Credentials are never logged. Every layer degrades
+to CSV if MySQL is unavailable, so the pipeline never hard-fails.
+
+## Layer 4 (next)
+
+Regime routing (momentum in trends / mean-reversion in chop) + combine
+uncorrelated solid survivors + sizing → the signal engine.

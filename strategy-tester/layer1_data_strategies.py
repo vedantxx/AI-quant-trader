@@ -134,11 +134,18 @@ def download_universe(force: bool = False, verbose: bool = True,
     _load_env()
     pkey = os.environ.get("POLYGON_API_KEY")
     os.makedirs(DATA_DIR, exist_ok=True)
+    try:
+        import db as _db
+        use_db = _db.available()
+    except Exception:
+        _db, use_db = None, False
     out: Dict[str, pd.DataFrame] = {}
     for tkr in UNIVERSE:
         cache = os.path.join(DATA_DIR, f"{tkr.replace('-', '_')}.csv")
         df = None
-        if not force and os.path.exists(cache):
+        if not force and use_db:  # primary store: MySQL
+            df = _db.load_bars(tkr)
+        if df is None and not force and os.path.exists(cache):
             try:
                 df = pd.read_csv(cache, index_col=0, parse_dates=True)
             except Exception:
@@ -166,6 +173,11 @@ def download_universe(force: bool = False, verbose: bool = True,
                 print(f"  skip {tkr}: {0 if df is None else len(df)} bars (< {MIN_BARS})")
             continue
         df.index = pd.to_datetime(df.index)
+        if use_db:  # mirror into MySQL (primary store)
+            try:
+                _db.save_bars(tkr, df)
+            except Exception:
+                pass
         out[tkr] = df
         if verbose:
             print(f"  {tkr:9s} {len(df):5d} bars  {df.index[0].date()} .. {df.index[-1].date()}")

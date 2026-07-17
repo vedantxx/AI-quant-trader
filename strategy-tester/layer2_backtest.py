@@ -88,7 +88,7 @@ def strat_returns(pos: pd.Series, ret: pd.Series, cost: float) -> pd.Series:
 # Walk-forward: 5 windows, 70/30, stitch the OOS tails
 # --------------------------------------------------------------------------- #
 def walk_forward(pos: pd.Series, ret: pd.Series, cost: float,
-                 n_windows: int, is_frac: float) -> dict:
+                 n_windows: int, is_frac: float, return_series: bool = False):
     n = len(pos)
     bounds = np.linspace(0, n, n_windows + 1).astype(int)
     is_parts: List[pd.Series] = []
@@ -106,11 +106,25 @@ def walk_forward(pos: pd.Series, ret: pd.Series, cost: float,
         oos_parts.append(sr.iloc[k:])
         oos_trades += count_trades(wpos.iloc[k:])
     if not oos_parts:
-        return dict(is_sharpe=0.0, oos_sharpe=0.0, oos_maxdd=0.0, trades=0)
+        empty = pd.Series(dtype=float)
+        stats = dict(is_sharpe=0.0, oos_sharpe=0.0, oos_maxdd=0.0, trades=0)
+        return (stats, empty) if return_series else stats
     is_r = pd.concat(is_parts)
     oos_r = pd.concat(oos_parts)
-    return dict(is_sharpe=sharpe(is_r), oos_sharpe=sharpe(oos_r),
-                oos_maxdd=max_drawdown(oos_r), trades=oos_trades)
+    stats = dict(is_sharpe=sharpe(is_r), oos_sharpe=sharpe(oos_r),
+                 oos_maxdd=max_drawdown(oos_r), trades=oos_trades)
+    return (stats, oos_r) if return_series else stats
+
+
+def oos_returns(df: pd.DataFrame, fn, params: dict, cfg: "Config",
+                asset: str = "") -> pd.Series:
+    """Stitched out-of-sample daily return series for one config on one asset."""
+    ret = df["Close"].pct_change().fillna(0.0)
+    cost = cfg.crypto_cost if asset in CRYPTO else cfg.cost
+    pos = fn(df, **params)
+    _, oos_r = walk_forward(pos, ret, cost, cfg.n_windows, cfg.is_frac,
+                            return_series=True)
+    return oos_r
 
 
 # --------------------------------------------------------------------------- #
@@ -236,16 +250,26 @@ def main() -> None:
                  max_sharpe=a.max_sharpe, overfit_gap=a.overfit_gap,
                  min_trades=a.min_trades)
 
-    if a.reuse and os.path.exists(SWEEP_CSV):
-        print(f"Reusing {SWEEP_CSV}")
-        sweep = pd.read_csv(SWEEP_CSV)
-    else:
+    import db
+
+    sweep = None
+    if a.reuse:
+        sweep = db.load_sweep()
+        if sweep is None and os.path.exists(SWEEP_CSV):
+            sweep = pd.read_csv(SWEEP_CSV)
+        if sweep is not None:
+            print(f"Reusing saved sweep ({len(sweep):,} rows).")
+    if sweep is None:
         print("Loading universe (cached)…")
         data = L.download_universe(verbose=False)
         print(f"  {len(data)} assets loaded.")
         sweep = run_sweep(data, cfg)
-        sweep.to_csv(SWEEP_CSV, index=False)
-        print(f"Wrote {SWEEP_CSV} ({len(sweep):,} rows).")
+        if db.available():
+            db.save_sweep(sweep)
+            print(f"Wrote {len(sweep):,} rows to MySQL (sweep_results).")
+        else:
+            sweep.to_csv(SWEEP_CSV, index=False)
+            print(f"MySQL unavailable — wrote {SWEEP_CSV} ({len(sweep):,} rows).")
 
     funnel_report(sweep, cfg)
 
