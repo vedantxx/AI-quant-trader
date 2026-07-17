@@ -22,3 +22,4 @@ strategy-tester/data/
 strategy-tester/sweep_results.csv
 strategy-tester/param_sensitivity.csv
 strategy-tester/bootstrap_results.csv
+strategy-tester/xsec_momentum.csv

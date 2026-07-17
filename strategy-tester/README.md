@@ -113,7 +113,28 @@ Connection is read from repo-root `.env` (`DB_HOST`/`DB_PORT`/`DB_USER`/
 password, `strategy_tester`). Credentials are never logged. Every layer degrades
 to CSV if MySQL is unavailable, so the pipeline never hard-fails.
 
-## Layer 4 (next)
+## Layer 4 — Cross-Sectional Momentum Check (`layer4_xsec_momentum.py`)
 
-Regime routing (momentum in trends / mean-reversion in chop) + combine
-uncorrelated solid survivors + sizing → the signal engine.
+A standalone honesty check. Single-asset momentum scored near zero in the sweep;
+the form the research actually backs is *cross-sectional* — ranking assets
+against each other. Every 21 days rank the whole basket by trailing return, go
+long the top third / short the bottom third (equal weight), hold to the next
+rebalance, pay the same per-asset costs on turnover. Lookbacks: 3m, 6m, and the
+standard 12-1 (skip the last month). Scored with the same 5-window 70/30
+walk-forward so the OOS Sharpe is directly comparable, then reported straight —
+including the deep drawdowns and any regime lean. Writes `xsec_momentum.csv`
+(+ MySQL `xsec_momentum`).
+
+```bash
+python layer4_xsec_momentum.py
+```
+
+Finding on this universe (2010–2024): best OOS Sharpe ≈ 0.32 (12-1m) vs
+single-asset ts_momentum mean ≈ 0.18 — cross-sectional edges out the average but
+stays weak, with deep drawdowns (~−34% OOS) and clear regime dependence
+(negative in some walk-forward windows). Reported as it came out, not tuned.
+
+## Next
+
+Regime routing (momentum in trends / mean-reversion in chop) + combine the
+*solid* uncorrelated survivors + sizing → the signal engine.
