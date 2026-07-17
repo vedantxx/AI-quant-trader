@@ -109,6 +109,15 @@ except Exception as exc:  # noqa: BLE001 - keep the console alive
 
 snap = st.session_state.get("snap", {})
 
+# ------------------------------------------------------------------- guard
+if "topbar" not in snap:
+    st.info("No snapshot yet. Click **▶ Start / Retrain** in the sidebar. "
+            "If this persists after a fresh deploy, **Reboot** the app "
+            "(Manage app → ⋮ → Reboot) to pull the latest code.")
+    if snap.get("status") == "no_equity":
+        st.warning("Account equity is $0 — reset/fund the paper account.")
+    st.stop()
+
 # ------------------------------------------------------------------- top bar
 c.top_bar(snap["topbar"])
 st.write("")
