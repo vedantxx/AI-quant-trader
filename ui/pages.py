@@ -83,6 +83,52 @@ def _regime_card(r: dict) -> None:
     st.bar_chart(probs, height=150)
 
 
+# ============================================================== SIGNALS
+def signals(snap: dict) -> None:
+    rows = snap["symbols"]
+    counts = {"BUY": 0, "SELL": 0, "HOLD": 0, "REJECT": 0}
+    for r in rows:
+        counts[r["action"]] = counts.get(r["action"], 0) + 1
+
+    m = st.columns(4)
+    c.kpi(m[0], "Buy", str(counts["BUY"]), "actionable", "up")
+    c.kpi(m[1], "Sell", str(counts["SELL"]), "actionable", "up")
+    c.kpi(m[2], "Hold", str(counts["HOLD"]), "in band", "mut")
+    c.kpi(m[3], "Reject", str(counts["REJECT"]), "risk veto", "down")
+
+    top = st.columns([1, 1, 2])
+    actionable_only = top[0].toggle("Actionable only", value=False)
+    sort_by = top[1].selectbox("Sort", ["action", "confidence", "drift", "symbol"], key="sig_sort")
+
+    c.section("Signals received  ·  live per-symbol decisions this bar")
+    df = pd.DataFrame(rows)
+    if df.empty:
+        c.empty("No signals — run an iteration.")
+    else:
+        df = df[["symbol", "action", "target", "current", "drift", "confidence",
+                 "price", "stop", "leverage", "reason"]]
+        if actionable_only:
+            df = df[df["action"].isin(["BUY", "SELL"])]
+        df = df.sort_values(sort_by, ascending=(sort_by == "symbol"))
+        if df.empty:
+            c.empty("No actionable signals right now.")
+        else:
+            st.dataframe(
+                c.style_actions(df).format({
+                    "target": "{:.1%}", "current": "{:.1%}", "drift": "{:+.1%}",
+                    "confidence": "{:.0%}", "price": "${:,.2f}", "stop": "${:,.2f}",
+                    "leverage": "{:.2f}x"}),
+                use_container_width=True, hide_index=True, height=430)
+
+    c.section("Signal history  ·  rolling feed")
+    hist = snap.get("recent_signals", [])
+    if hist:
+        st.dataframe(pd.DataFrame(list(reversed(hist))), use_container_width=True,
+                     hide_index=True, height=260)
+    else:
+        c.empty("No history yet.")
+
+
 # ============================================================== PORTFOLIO
 def portfolio(snap: dict) -> None:
     df = _symbols_df(snap)

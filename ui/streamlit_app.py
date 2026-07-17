@@ -123,23 +123,25 @@ c.top_bar(snap["topbar"])
 st.write("")
 
 # ------------------------------------------------------------------- tabs
-tabs = st.tabs(["Overview", "Portfolio", "Regimes", "Orders", "Risk", "Model",
-                "Logs", "Settings"])
+tabs = st.tabs(["Overview", "Signals", "Portfolio", "Regimes", "Orders", "Risk",
+                "Model", "Logs", "Settings"])
 with tabs[0]:
     pages.overview(snap)
 with tabs[1]:
-    pages.portfolio(snap)
+    pages.signals(snap)
 with tabs[2]:
-    pages.regimes(snap)
+    pages.portfolio(snap)
 with tabs[3]:
-    pages.orders(snap)
+    pages.regimes(snap)
 with tabs[4]:
-    pages.risk(snap)
+    pages.orders(snap)
 with tabs[5]:
-    pages.model(snap)
+    pages.risk(snap)
 with tabs[6]:
-    pages.logs(snap)
+    pages.model(snap)
 with tabs[7]:
+    pages.logs(snap)
+with tabs[8]:
     c.section("Session")
     st.write(f"Universe: **{', '.join(symbols)}**  ·  Regime symbol: **{regime_symbol}**")
     st.write(f"Mode: **{'DRY-RUN' if dry_run else 'LIVE-ORDER'}**  ·  "
