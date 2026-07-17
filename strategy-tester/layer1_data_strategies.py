@@ -49,6 +49,67 @@ UNIVERSE: List[str] = [
 ]
 
 
+def _load_env() -> None:
+    """Load repo-root .env into os.environ (stdlib; no python-dotenv needed).
+    Never overwrites already-set vars; values are never logged."""
+    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    path = os.path.join(root, ".env")
+    if not os.path.exists(path):
+        return
+    with open(path) as fh:
+        for line in fh:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            if k and k not in os.environ:
+                os.environ[k] = v.strip().strip('"').strip("'")
+
+
+# Polygon uses prefixed symbols for crypto/forex; equities/ETFs pass through.
+_POLYGON_SYMBOL = {"BTC-USD": "X:BTCUSD", "ETH-USD": "X:ETHUSD"}
+
+
+def _polygon_ohlcv(ticker: str, key: str, retries: int = 3) -> pd.DataFrame | None:
+    """Daily adjusted OHLCV from Polygon aggregates via stdlib urllib.
+    Returns None on any failure so the caller can fall back to yfinance."""
+    import json
+    import ssl
+    import time
+    import urllib.error
+    import urllib.request
+
+    try:  # python.org builds lack system CA certs; use certifi (ships w/ yfinance)
+        import certifi
+        ctx = ssl.create_default_context(cafile=certifi.where())
+    except Exception:
+        ctx = ssl.create_default_context()
+
+    sym = _POLYGON_SYMBOL.get(ticker, ticker)
+    url = (f"https://api.polygon.io/v2/aggs/ticker/{sym}/range/1/day/"
+           f"{START}/{END}?adjusted=true&sort=asc&limit=50000&apiKey={key}")
+    for attempt in range(retries):
+        try:
+            with urllib.request.urlopen(url, timeout=30, context=ctx) as resp:
+                data = json.load(resp)
+        except urllib.error.HTTPError as e:
+            if e.code == 429:  # rate limited (free tier: 5 req/min)
+                time.sleep(15 * (attempt + 1))
+                continue
+            return None
+        except Exception:
+            return None
+        res = data.get("results")
+        if not res:
+            return None
+        df = pd.DataFrame(res).rename(
+            columns={"o": "Open", "h": "High", "l": "Low", "c": "Close", "v": "Volume"})
+        df.index = pd.to_datetime(df["t"], unit="ms", utc=True).dt.tz_convert(None).dt.normalize()
+        return df[["Open", "High", "Low", "Close", "Volume"]]
+    return None
+
+
 def _flatten_ohlcv(raw: pd.DataFrame) -> pd.DataFrame:
     """Reduce a yfinance frame (possibly MultiIndex columns) to OHLCV."""
     if isinstance(raw.columns, pd.MultiIndex):
@@ -70,8 +131,8 @@ def download_universe(force: bool = False, verbose: bool = True,
     """
     import time
 
-    import yfinance as yf
-
+    _load_env()
+    pkey = os.environ.get("POLYGON_API_KEY")
     os.makedirs(DATA_DIR, exist_ok=True)
     out: Dict[str, pd.DataFrame] = {}
     for tkr in UNIVERSE:
@@ -82,7 +143,13 @@ def download_universe(force: bool = False, verbose: bool = True,
                 df = pd.read_csv(cache, index_col=0, parse_dates=True)
             except Exception:
                 df = None
-        if df is None:
+        if df is None and pkey:  # primary source: Polygon
+            p = _polygon_ohlcv(tkr, pkey)
+            if p is not None and len(p) >= MIN_BARS:  # else free-tier stub -> yfinance
+                df = p
+                df.to_csv(cache)
+        if df is None:  # backup source: yfinance
+            import yfinance as yf
             for attempt in range(retries):
                 try:
                     raw = yf.download(tkr, start=START, end=END, auto_adjust=True,

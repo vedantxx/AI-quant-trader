@@ -19,3 +19,4 @@ state_snapshot.json
 
 # strategy-tester data cache
 strategy-tester/data/
+strategy-tester/sweep_results.csv
